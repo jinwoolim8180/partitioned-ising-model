@@ -1,13 +1,13 @@
-# Fortran Implementation of Ising model in 2D and 3D
+# Fortran Implementation of Ising model in 2D
 
-A Fortran implementation of Markov Chain Monte Carlo for 2D and 3D square-lattice Ising model.
+A Fortran implementation of Markov Chain Monte Carlo for 2D square-lattice Ising model.
 
 It is possible to calculate mean energy, magnetization, specific heat, and susceptibility at various temperatures and save it to a csv file.
 
-- [x] OpenMP supported
+- [x] OpenMP supported. This repository is useful for simulations on a large square-lattice at few temperature points.
 
 > [!Warning]
-> For precise results, experiments on a large scale 3D-lattice Ising model need *a lot of* energy and time. We strongly recommend you to use a server with decent multi-core CPUs.
+> For precise results, experiments on a large scale lattice Ising model need *a lot of* energy and time. We strongly recommend you to use a server with decent multi-core CPUs.
 
 <!-- ## Result -->
 <!-- 
@@ -40,29 +40,22 @@ bash compile.sh
 
 To run experiments, run the command below:
 
-#### 2D-lattice Ising model
-
 ```bash
-./main --size 30 --dim 2 --init_temp 1.5 --final_temp 3.5 --temp_step 0.02 --eqstep 1000 --mcstep 1000
-```
-
-#### 3D-lattice Ising model
-```bash
-./main --size 30 --dim 3 --init_temp 1.5 --final_temp 6.5 --temp_step 0.04 --eqstep 3000 --mcstep 3000
+./main --size 30 --init_temp 1.5 --final_temp 3.5 --temp_step 0.02 --eqstep 1000 --mcstep 1000
 ```
 
 #### Options
 
 To run simulation with your own custom options, run the program with the options below:
 
-- -s, --size :        size of the lattice               (default: 30)
-- -d, --dim :         dimension of the lattice          (default: 3)
+- -s, --block_size :  size of the partitioned block of a  lattice (default: 30)
 - -i, --init_temp :   initial temperature of the output (default: 1.5)
 - -f, --final_temp :  final temperature of the output   (default: 6.5)
 - -t, --temp_step :   step size of the temperature      (default: 0.04)
 - -m, --mcstep :      number of Monte Carlo steps       (default: 1000)
 - -e, --eqstep :      number of steps for equilibration (default: 1000)
 - -r, --dir :         directory to save the results     (default: ./results/)
+- -p, --thread_per_row : number of threads per row of a lattice (default: 6)
 - -h, --help :        print usage information and exit
 
 ## Future works to be done

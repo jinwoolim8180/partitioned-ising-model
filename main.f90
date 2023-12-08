@@ -2,39 +2,48 @@ program main
     use OMP_LIB
     use f90getopt
     use hyperparameter
-    use montecarlo2d
-    use montecarlo3d
+    use montecarlo
+    use, intrinsic :: iso_fortran_env
     implicit none
 
     ! hyperparameters entered as arguments
     ! ------------------------------------
-    type(option_s) :: opts(9)
+    type(option_s) :: opts(10)
 
-    ! statistical values calculated through Monte Carlo
+    ! statistical values and spin configuration Monte Carlo
     !--------------------------------------------------
-    real, dimension(:), allocatable :: Ts, Es, Ms, Cs, Xs
-    integer                         :: num_steps, index
-    real                            :: progress
-    real                            :: T, E, M, C, X
-    character(len=7)                :: size_char, dim_char, eqstep_char, mcstep_char
-    character(len=100)              :: csv_file
+    real, dimension(:), allocatable       :: Ts, Es, Ms, Cs, Xs
+    integer, dimension(:, :), allocatable :: spins
+    real                                  :: beta, tempE, tempM
+    real(real64)                          :: T, E1, M1, E2, M2
+    integer                               :: norm, volume
+
+    ! misc settings
+    ! -------------
+    integer            :: threadx, thready
+    integer            :: step, i, j, num_temps, temp_index
+    integer            :: start, end, rate
+    real(real64)       :: progress
+    character(len=7)   :: size_char, dim_char, eqstep_char, mcstep_char
+    character(len=100) :: csv_file
 
     ! receive argument from the command line
     ! --------------------------------------
-    opts(1) = option_s('size', .true.,  's')
+    opts(1) = option_s('block_size', .true.,  's')
     opts(2) = option_s('dim',  .true., 'd')
     opts(3) = option_s('init_temp', .true., 'i')
     opts(4) = option_s('final_temp', .true., 'f')
     opts(5) = option_s('temp_step', .true., 't')
     opts(6) = option_s('mcstep', .true., 'm')
     opts(7) = option_s('eqstep', .true., 'e')
-    opts(8) = option_s('dir', .true., 'r')
-    opts(9) = option_s('help', .false., 'h')
+    opts(8) = option_s('thread_per_row', .true., 'p')
+    opts(9) = option_s('dir', .true., 'r')
+    opts(10) = option_s('help', .false., 'h')
 
     do 
-        select case (getopt("s:d:i:f:t:m:e:r:h", opts))
+        select case (getopt("s:d:i:f:t:m:e:p:r:h", opts))
             case ('s')
-                read (optarg, '(i4)') size
+                read (optarg, '(i4)') block_size
             case ('d')
                 read (optarg, '(i1)') dim
             case ('i')
@@ -47,6 +56,8 @@ program main
                 read (optarg, '(i7)') mcstep
             case ('e')
                 read (optarg, '(i7)') eqstep
+            case ('p')
+                read (optarg, '(i3)') thread_per_row
             case ('r')
                 read (optarg, '(a)') directory
             case ('h')
@@ -59,16 +70,21 @@ program main
 
     ! print number of threads for simulation
     ! --------------------------------------
-    call print_num_threads()
+    num_threads = thread_per_row ** 2
+    size = block_size * thread_per_row
+    num_temps = int((final_temp - init_temp) / temp_step) + 1
+    if (num_threads > get_num_threads()) then
+        print '(a)', "Thread setting not available for your CPU"
+        stop
+    endif
 
     ! allocate array to store simulation results
     ! ------------------------------------------
-    num_steps = int((final_temp - init_temp) / temp_step) + 1
-    allocate(Ts(num_steps))
-    allocate(Es(num_steps))
-    allocate(Ms(num_steps))
-    allocate(Cs(num_steps))
-    allocate(Xs(num_steps))
+    allocate(Ts(num_temps))
+    allocate(Es(num_temps))
+    allocate(Ms(num_temps))
+    allocate(Cs(num_temps))
+    allocate(Xs(num_temps))
     Ts = 0
     Es = 0
     Ms = 0
@@ -77,31 +93,96 @@ program main
 
     ! parallel Monte Carlo simulation
     ! -------------------------------
+    temp_index = 0
     progress = 0.
-    write (*, 101, advance='no') creturn, progress, 100.0, 0.0
-    101 format(a, "Progress: ", f5.1, '% / ', f5.1, '%')
-    !$OMP PARALLEL DO PRIVATE(index, T, E, M, C, X, current)
-    do index = 1, num_steps
-        T = init_temp + temp_step * (index - 1)
+    volume = size ** dim
+    norm = mcstep * volume
+    progress = 0.
+    allocate(spins(size, size))
+    101 format(a, "Progress: ", f5.1, '% / ', f5.1, '% (Time: ', f12.6, 's)')
+    call system_clock(start, rate)
+    do temp_index = 1, num_temps
+        ! initialize spin configuration, etc.
+        E1 = 0; M1 = 0; E2 = 0; M2 = 0;
+        T = init_temp + temp_step * (temp_index - 1)
+        beta = 1.0 / T
+        spins = 1
 
-        if (dim == 2) then
-            call simulate2d(1.0 / T, E, M, C, X)
-        else
-            call simulate3d(1.0 / T, E, M, C, X)
-        endif
+        ! equilibration steps
+        !$OMP PARALLEL PRIVATE(i, j, threadx, thready, end) SHARED(spins, progress)
+        !$OMP DO COLLAPSE(2)
+        do i = 1, thread_per_row
+            do j = 1, thread_per_row
+                equilibration : block
+                    integer, dimension(:, :), allocatable :: spin
+                    threadx = 1 + block_size * (i - 1)
+                    thready = 1 + block_size * (j - 1)
+                    spin = spins(threadx:threadx + block_size - 1, thready:thready + block_size - 1)
+                    do step = 1, eqstep
+                        call metropolis(spin, beta)
 
-        Ts(index) = T
-        Es(index) = E
-        Ms(index) = abs(M)
-        Cs(index) = C
-        Xs(index) = X
+                        ! show progress bar
+                        call system_clock(end)
+                        !$OMP ATOMIC
+                        progress = progress + 100. / (num_temps * num_threads * (eqstep + mcstep))
+                        write (*, 101, advance='no') creturn, progress, 100.0, real(end - start) / real(rate)
+                    end do
+                    spins(threadx:threadx + block_size - 1, thready:thready + block_size - 1) = spin
+                    ! deallocate(spin)
+                end block equilibration
+            end do
+        end do
+        !$OMP END DO
+        !$OMP END PARALLEL
 
-        ! show progress bar
-        !$OMP ATOMIC
-        progress = progress + 100. / num_steps
-        write (*, 101, advance='no') creturn, progress, 100.0
+        ! Monte Carlo steps
+        !$OMP PARALLEL PRIVATE(i, j, threadx, thready, end) SHARED(spins, progress) num_threads(num_threads)
+        i = int(omp_get_thread_num() / thread_per_row)
+        j = omp_get_thread_num() - thread_per_row * i
+        threadx = 1 + block_size * i
+        thready = 1 + block_size * j
+        mcmcstep : block
+            integer, dimension(:, :), allocatable :: spin
+            do step = 1, mcstep
+                    spin = spins(threadx:threadx + block_size - 1, thready:thready + block_size - 1)
+                    call metropolis(spin, beta)
+
+                    ! show progress bar
+                    call system_clock(end)
+                    !$OMP ATOMIC
+                    progress = progress + 100. / (num_temps * num_threads * (eqstep + mcstep))
+                    write (*, 101, advance='no') creturn, progress, 100.0, real(end - start) / real(rate)
+                    spins(threadx:threadx + block_size - 1, thready:thready + block_size - 1) = spin
+                    ! deallocate(spin)
+
+                ! calculate physical quantities
+                !$OMP BARRIER
+                !$OMP SINGLE
+                tempE = calc_energy(spins)
+                tempM = calc_magnetization(spins)
+                E1 = E1 + tempE
+                M1 = M1 + tempM
+                E2 = E2 + tempE ** 2 / norm
+                M2 = M2 + tempM ** 2 / norm
+                !$OMP END SINGLE
+            end do
+        end block mcmcstep
+        !$OMP END PARALLEL
+
+        ! save results to array
+        Ts(temp_index) = T
+        Es(temp_index) = E1 / norm
+        Ms(temp_index) = M1 / norm
+        Cs(temp_index) = (E2 - volume * (E1 / norm) ** 2) * beta ** 2
+        Xs(temp_index) = (M2 - volume * (M1 / norm) ** 2) * beta
     end do
-    !$OMP END PARALLEL DO
+    call system_clock(end)
+    print *, ""
+    print '("Time = ",f12.6," seconds.")', real(end - start) / real(rate)
+
+    ! deallocate allocated memory
+    ! ---------------------------
+    deallocate(spins)
     print *, ""
 
     ! save results to the directory
@@ -116,8 +197,8 @@ program main
                                // trim("_MC") // trim(mcstep_char) // trim(".csv")
     open(unit=1, file=csv_file, status='unknown')
     write (1, '(5(a, x))') 'T', 'E', 'M', 'C', 'X'
-    do index = 1, num_steps
-        write (1, '(5(g20.10, x))') Ts(index), Es(index), Ms(index), Cs(index), Xs(index)
+    do temp_index = 1, num_temps
+        write (1, '(5(g20.10, x))') Ts(temp_index), Es(temp_index), Ms(temp_index), Cs(temp_index), Xs(temp_index)
     end do
     close(1)
     print '(2a, /)', "Results saved to ", csv_file
@@ -130,23 +211,25 @@ program main
 
 contains
     subroutine print_help()
-        print '(a, /)', 'command-line options:'
-        print '(a)', '  -s, --size        size of the lattice               (default: 30)'
-        print '(a)', '  -d, --dim         dimension of the lattice          (default: 3)'
-        print '(a)', '  -i, --init_temp   initial temperature of the output (default: 1.5)'
-        print '(a)', '  -f, --final_temp  final temperature of the output   (default: 6.5)'
-        print '(a)', '  -t, --temp_step   step size of the temperature      (default: 0.04)'
-        print '(a)', '  -m, --mcstep      number of Monte Carlo steps       (default: 1000)'
-        print '(a)', '  -e, --eqstep      number of steps for equilibration (default: 1000)'
-        print '(a)', '  -r, --dir         directory to save the results     (default: ./results/)'
+        print '(a, /)', 'Command-line options:'
+        print '(a)', '  -s, --block_size      size of the partitioned block of a lattice (default: 30)'
+        print '(a)', '  -d, --dim             dimension of the lattice                   (default: 3)'
+        print '(a)', '  -i, --init_temp       initial temperature of the output          (default: 1.5)'
+        print '(a)', '  -f, --final_temp      final temperature of the output            (default: 6.5)'
+        print '(a)', '  -t, --temp_step       step size of the temperature               (default: 0.04)'
+        print '(a)', '  -m, --mcstep          number of Monte Carlo steps                (default: 1000)'
+        print '(a)', '  -e, --eqstep          number of steps for equilibration          (default: 1000)'
+        print '(a)', '  -p, --thread_per_row  number of threads per row of a lattice     (default: 1000)'
+        print '(a)', '  -r, --dir             directory to save the results              (default: ./results/)'
         print '(a, /)', '  -h, --help        print usage information and exit'
     end subroutine print_help
 
-    subroutine print_num_threads()
+    integer function get_num_threads()
         integer num_threads
         !$OMP PARALLEL SHARED(num_threads)
         num_threads = omp_get_num_threads()
         !$OMP END PARALLEL
         print '(a, i3)', "Number of threads: ", num_threads
-    end subroutine print_num_threads
+        get_num_threads = num_threads
+    end function get_num_threads
 end program main

@@ -1,1 +1,1 @@
-gfortran -fopenmp -o main f90getopt.F90 hyperparameter.f90 montecarlo2d.f90 montecarlo3d.f90 main.f90
+gfortran -fopenmp -o main f90getopt.F90 hyperparameter.f90 montecarlo.f90 main.f90

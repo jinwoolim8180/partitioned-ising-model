@@ -221,7 +221,7 @@ contains
         print '(a)', '  -e, --eqstep          number of steps for equilibration          (default: 1000)'
         print '(a)', '  -p, --thread_per_row  number of threads per row of a lattice     (default: 1000)'
         print '(a)', '  -r, --dir             directory to save the results              (default: ./results/)'
-        print '(a, /)', '  -h, --help        print usage information and exit'
+        print '(a, /)', '  -h, --help            print usage information and exit'
     end subroutine print_help
 
     integer function get_num_threads()

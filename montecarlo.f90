@@ -22,7 +22,7 @@ contains
     subroutine metropolis(spin, beta)
         ! argument of the subroutine
         integer, dimension(:, :), allocatable :: spin
-        real, intent(in)                      :: beta
+        real(real64), intent(in)              :: beta
         ! local variables of the subroutine
         integer, dimension(:, :), allocatable :: neighbors
         integer i, x, y, s, R
@@ -91,7 +91,7 @@ contains
 
     ! calculation of energy of the spin using cshift
     ! ------------------------------
-    real function calc_energy(spin)
+    real(real64) function calc_energy(spin)
         integer, dimension(:, :), allocatable, intent(in) :: spin
         integer, dimension(:, :), allocatable :: xps
         integer, dimension(:, :), allocatable :: yps
@@ -109,7 +109,7 @@ contains
 
     ! calculation of magnetization of spin
     ! ------------------------------------
-    real function calc_magnetization(spin)
+    real(real64) function calc_magnetization(spin)
         integer, dimension(:, :), allocatable, intent(in) :: spin
         calc_magnetization = sum(spin)
     end function calc_magnetization

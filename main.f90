@@ -14,9 +14,9 @@ program main
     !--------------------------------------------------
     real, dimension(:), allocatable       :: Ts, Es, Ms, Cs, Xs
     integer, dimension(:, :), allocatable :: spins
-    real                                  :: beta, tempE, tempM
-    real(real64)                          :: T, E1, M1, E2, M2
-    integer                               :: norm, volume
+    real(real64)                          :: tempE, tempM
+    real(real64)                          :: T, beta, E1, M1, E2, M2
+    real(real64)                          :: norm, volume
 
     ! misc settings
     ! -------------
@@ -160,8 +160,8 @@ program main
                 !$OMP SINGLE
                 tempE = calc_energy(spins)
                 tempM = calc_magnetization(spins)
-                E1 = E1 + tempE
-                M1 = M1 + tempM
+                E1 = E1 + tempE / norm
+                M1 = M1 + tempM / norm
                 E2 = E2 + tempE ** 2 / norm
                 M2 = M2 + tempM ** 2 / norm
                 !$OMP END SINGLE
@@ -171,10 +171,10 @@ program main
 
         ! save results to array
         Ts(temp_index) = T
-        Es(temp_index) = E1 / norm
-        Ms(temp_index) = M1 / norm
-        Cs(temp_index) = (E2 - volume * (E1 / norm) ** 2) * beta ** 2
-        Xs(temp_index) = (M2 - volume * (M1 / norm) ** 2) * beta
+        Es(temp_index) = E1
+        Ms(temp_index) = M1
+        Cs(temp_index) = (E2 - volume * E1 ** 2) * beta ** 2
+        Xs(temp_index) = (M2 - volume * M1 ** 2) * beta
     end do
     call system_clock(end)
     print *, ""

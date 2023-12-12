@@ -10,37 +10,35 @@ contains
     ! -----------------------------------------------------
     subroutine init_spin(spin)
         integer, dimension(:, :), allocatable :: spin
-        real, dimension(:, :), allocatable    :: rand
-        ! allocate(spin(2 * dim, block_size))
-        allocate(rand(2 * dim, block_size))
-        call random_number(rand)
-        spin = 2 * int(2 * rand) - 1
+        ! real rand
+        allocate(spin(2 * dim, block_size))
+        ! call random_number(rand)
+        ! spin = 2 * int(rand) - 1
     end subroutine init_spin
 
     ! Metropolis-Hastings algorithm for Monte Carlo simulation
     ! --------------------------------------------------------
-    subroutine metropolis(spin, neighbors, beta)
+    subroutine metropolis(spin, beta)
         ! argument of the subroutine
         integer, dimension(:, :), allocatable :: spin
-        integer, dimension(:, :), allocatable :: neighbors
         real(real64), intent(in)              :: beta
         ! local variables of the subroutine
+        integer, dimension(:, :), allocatable :: neighbors
         integer, dimension(:, :), allocatable :: next_neighbors
         integer i, x, y, s, R
         integer xpp, ypp, xnn, ynn ! neighbor spins
         real x0, y0, rand
         real dH
 
+        ! assign memory to neighbor spins
         ! call init_spin(neighbors)
-        ! allocate(next_neighbors(4, block_size))
-        ! neighbors(1, :) = spin(block_size, :)
-        ! neighbors(2, :) = spin(:, block_size)
-        ! neighbors(3, :) = spin(1, :)
-        ! neighbors(4, :) = spin(:, 1)
-        next_neighbors = neighbors
+        allocate(neighbors(2 * dim, block_size))
+        neighbors(1, :) = -spin(block_size, :)
+        neighbors(2, :) = -spin(:, block_size)
+        neighbors(3, :) = -spin(1, :)
+        neighbors(4, :) = -spin(:, 1)
 
         ! Metropolis-Hastings algorithm main body
-        neighbors = 1
         do i = 1, block_size ** dim
             call random_number(x0)
             call random_number(y0)
@@ -82,14 +80,14 @@ contains
             endif
 
             ! save neighbors to the matrix
-            call random_number(rand)
-            if (rand < 1 / interval) then
-                neighbors = next_neighbors
-                next_neighbors(1, :) = spin(block_size, :)
-                next_neighbors(2, :) = spin(:, block_size)
-                next_neighbors(3, :) = spin(1, :)
-                next_neighbors(4, :) = spin(:, 1)
-            endif
+            ! call random_number(rand)
+            ! if (rand < 1 / interval) then
+            !     neighbors = next_neighbors
+            !     next_neighbors(1, :) = spin(block_size, :)
+            !     next_neighbors(2, :) = spin(:, block_size)
+            !     next_neighbors(3, :) = spin(1, :)
+            !     next_neighbors(4, :) = spin(:, 1)
+            ! endif
         end do
     end subroutine metropolis
 

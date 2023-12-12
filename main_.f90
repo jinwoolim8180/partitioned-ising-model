@@ -20,9 +20,8 @@ program main
 
     ! misc settings
     ! -------------
-    integer            :: i, j, threadx, thready
-    integer            :: xpp, ypp, xnn, ynn
-    integer            :: step, num_temps, temp_index
+    integer            :: threadx, thready
+    integer            :: step, i, j, num_temps, temp_index
     integer            :: start, end, rate
     real(real64)       :: progress
     character(len=7)   :: size_char, dim_char, eqstep_char, mcstep_char
@@ -112,49 +111,44 @@ program main
         beta = 1.0 / T
         spins = 1
 
-        !$OMP PARALLEL PRIVATE(i, j, threadx, thready, xpp, ypp, xnn, ynn, end) &
-        !$OMP SHARED(spins, progress) num_threads(num_threads)
+        ! equilibration steps
+        !$OMP PARALLEL PRIVATE(i, j, threadx, thready, end) SHARED(spins, progress)
+        !$OMP DO COLLAPSE(2)
+        do i = 1, thread_per_row
+            do j = 1, thread_per_row
+                equilibration : block
+                    integer, dimension(:, :), allocatable :: spin
+                    threadx = 1 + block_size * (i - 1)
+                    thready = 1 + block_size * (j - 1)
+                    spin = spins(threadx:threadx + block_size - 1, thready:thready + block_size - 1)
+                    do step = 1, eqstep
+                        call metropolis(spin, beta)
+
+                        ! show progress bar
+                        call system_clock(end)
+                        !$OMP ATOMIC
+                        progress = progress + 100. / (num_temps * num_threads * (eqstep + mcstep))
+                        write (*, 101, advance='no') creturn, progress, 100.0, real(end - start) / real(rate)
+                    end do
+                    spins(threadx:threadx + block_size - 1, thready:thready + block_size - 1) = spin
+                    ! deallocate(spin)
+                end block equilibration
+            end do
+        end do
+        !$OMP END DO
+        !$OMP END PARALLEL
+
+        ! Monte Carlo steps
+        !$OMP PARALLEL PRIVATE(i, j, threadx, thready, end) SHARED(spins, progress) num_threads(num_threads)
         i = int(omp_get_thread_num() / thread_per_row)
         j = omp_get_thread_num() - thread_per_row * i
         threadx = 1 + block_size * i
         thready = 1 + block_size * j
-        call get_neighbors_index(i, j, xpp, ypp, xnn, ynn)
-
-        mcmc : block
+        mcmcstep : block
             integer, dimension(:, :), allocatable :: spin
-            integer, dimension(:, :), allocatable :: neighbors
-            real, dimension(:, :), allocatable    :: randoms
-            real random
-            allocate(spin(block_size, block_size))
-            allocate(neighbors(2 * dim, block_size))
-            allocate(randoms(block_size, block_size))
-            call random_number(randoms)
-            spin = 2 * int(2 * randoms) - 1
-            neighbors = 1
-
-            ! equilibration steps
-            do step = 1, eqstep
-                call metropolis(spin, neighbors, beta)
-
-                ! show progress bar
-                call system_clock(end)
-                !$OMP ATOMIC
-                progress = progress + 100. / (num_temps * num_threads * (eqstep + mcstep))
-                write (*, 101, advance='no') creturn, progress, 100.0, real(end - start) / real(rate)
-
-                spins(threadx:threadx + block_size - 1, thready:thready + block_size - 1) = spin
-                call random_number(random)
-                if (random < 1.0 / interval) then
-                    neighbors(1, :) = spins(block_size * (xnn + 1), thready:thready + block_size - 1)
-                    neighbors(2, :) = spins(threadx:threadx + block_size - 1, block_size * (ynn + 1))
-                    neighbors(3, :) = spins(1 + block_size * xpp, thready:thready + block_size - 1)
-                    neighbors(4, :) = spins(threadx:threadx + block_size - 1, 1 + block_size * ypp)
-                end if
-            end do
-
-            ! Monte Carlo steps
             do step = 1, mcstep
-                call metropolis(spin, neighbors, beta)
+                spin = spins(threadx:threadx + block_size - 1, thready:thready + block_size - 1)
+                call metropolis(spin, beta)
 
                 ! show progress bar
                 call system_clock(end)
@@ -162,16 +156,10 @@ program main
                 progress = progress + 100. / (num_temps * num_threads * (eqstep + mcstep))
                 write (*, 101, advance='no') creturn, progress, 100.0, real(end - start) / real(rate)
                 spins(threadx:threadx + block_size - 1, thready:thready + block_size - 1) = spin
-                call random_number(random)
-                if (random < 1.0 / interval) then
-                    neighbors(1, :) = spins(block_size * (xnn + 1), thready:thready + block_size - 1)
-                    neighbors(2, :) = spins(threadx:threadx + block_size - 1, block_size * (ynn + 1))
-                    neighbors(3, :) = spins(1 + block_size * xpp, thready:thready + block_size - 1)
-                    neighbors(4, :) = spins(threadx:threadx + block_size - 1, 1 + block_size * ypp)
-                end if
+                ! deallocate(spin)
 
                 ! calculate physical quantities
-                ! $OMP BARRIER
+                !$OMP BARRIER
                 !$OMP SINGLE
                 tempE = calc_energy(spins)
                 tempM = calc_magnetization(spins)
@@ -181,10 +169,7 @@ program main
                 M2 = M2 + tempM ** 2 / norm
                 !$OMP END SINGLE
             end do
-            deallocate(spin)
-            deallocate(neighbors)
-            deallocate(randoms)
-        end block mcmc
+        end block mcmcstep
         !$OMP END PARALLEL
 
         ! save results to array
@@ -250,46 +235,4 @@ contains
         print '(a, i3)', "Number of threads: ", num_threads
         get_num_threads = num_threads
     end function get_num_threads
-
-    subroutine get_neighbors_index(x, y, xpp, ypp, xnn, ynn)
-        integer, intent(in)  :: x, y
-        integer, intent(out) :: xpp, ypp, xnn, ynn
-
-        ! obtain neighbor threads
-        if (x == 0) then
-            xpp = 1
-            xnn = thread_per_row - 1
-        elseif (x == thread_per_row - 1) then
-            xpp = 0; ypp = y
-            xnn = thread_per_row - 2
-        else
-            xpp = x + 1
-            xnn = x - 1
-        endif
-
-        if (y == 0) then
-            ypp = 1
-            ynn = thread_per_row - 1
-        elseif (y == thread_per_row - 1) then
-            ypp = 0
-            ynn = thread_per_row - 2
-        else
-            ypp = y + 1
-            ynn = y - 1
-        endif
-    end subroutine get_neighbors_index
-
-    subroutine get_neighbors(spins, neighbors, threadx, thready, xpp, ypp, xnn, ynn)
-        integer, dimension(:, :), allocatable, intent(inout) :: spins
-        integer, dimension(:, :), allocatable, intent(inout) :: neighbors
-        integer, intent(in)                                  :: threadx, thready
-        integer, intent(in)                                  :: xpp, ypp, xnn, ynn
-        ! print '(i3, i3, i3, i3)', xpp, ypp, xnn, ynn
-        ! print '(i5, i5, i4, i4)', block_size * (xnn + 1), block_size * (ynn + 1), 1 + block_size * xpp, 1 + block_size * ypp
-        neighbors(1, :) = spins(block_size * (xnn + 1), thready:thready + block_size - 1)
-        neighbors(2, :) = spins(threadx:threadx + block_size - 1, block_size * (ynn + 1))
-        neighbors(3, :) = spins(1 + block_size * xpp, thready:thready + block_size - 1)
-        neighbors(4, :) = spins(threadx:threadx + block_size - 1, 1 + block_size * ypp)
-    end subroutine get_neighbors
-
 end program main
